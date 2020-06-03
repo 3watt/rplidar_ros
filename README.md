@@ -46,11 +46,11 @@ You should see rplidar's scan result in the console
 
 Notice: the different is serial_baudrate between A1/A2 and A3/S1
 
-RPLidar frame
+### RPLidar frame
 =====================================================================
 RPLidar frame must be broadcasted according to picture shown in rplidar-frame.png
 
-## Customizing
+# Customizing
 
 Kobuki에 RPLidar를 장착하기 위해서 다음과 같은 내용들을 수정하였음.
 
