@@ -1,6 +1,10 @@
 RPLIDAR ROS package
 =====================================================================
 
+RPLIDAR 구동을 위한 패키지 - 우리가 사용한 모델은 [A2M8](http://vctec.co.kr/product/360%EB%8F%84-%EB%A0%88%EC%9D%B4%EC%A0%80-%EC%8A%A4%EC%BA%90%EB%84%88-%ED%82%A4%ED%8A%B8-2-rplidar-a2-360-degree-laser-scanner-development-kit-/9432/) 모델이다.
+
+![rplidar_a2m8](https://user-images.githubusercontent.com/12381733/83995904-ac0d5e80-a995-11ea-9bb7-b309015dc858.jpg)
+
 ROS node and test application for RPLIDAR
 
 Visit following Website for more details about RPLIDAR:
