@@ -3,6 +3,7 @@
 
 RPLIDAR 구동을 위한 패키지 - 우리가 사용한 모델은 [A2M8](http://vctec.co.kr/product/360%EB%8F%84-%EB%A0%88%EC%9D%B4%EC%A0%80-%EC%8A%A4%EC%BA%90%EB%84%88-%ED%82%A4%ED%8A%B8-2-rplidar-a2-360-degree-laser-scanner-development-kit-/9432/) 모델이다.
 
+![스펙비교](https://github.com/3watt/rplidar_ros/blob/master/imags/specs.jpg)
 
 ROS node and test application for RPLIDAR
 
@@ -38,6 +39,8 @@ You should see rplidar's scan result in the rviz.
 ## RPLidar frame
 ---
 RPLidar frame must be broadcasted according to picture shown in 
+![A1 frame](https://github.com/3watt/rplidar_ros/blob/master/imags/rplidar_A1.png)
+![A2 fram](https://github.com/3watt/rplidar_ros/blob/master/imags/rplidar_A2.png)
 
 ## Customizing
 
