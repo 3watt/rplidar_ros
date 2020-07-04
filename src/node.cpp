@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
     bool inverted = false;
     bool angle_compensate = true;
     float min_distance;
-    float max_distance = 8.0;
+    float max_distance;
     int angle_compensate_multiple = 1; //it stand of angle compensate at per 1 degree
     std::string scan_mode;
     ros::NodeHandle nh;
@@ -220,7 +220,7 @@ int main(int argc, char *argv[])
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
     nh_private.param<float>("min_distance", min_distance, 0.15);
-
+    nh_private.param<float>("max_distance", max_distance, 8.0);
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros. SDK Version:" RPLIDAR_SDK_VERSION "");
 
     u_result op_result;
