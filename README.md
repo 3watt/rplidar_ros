@@ -46,11 +46,24 @@ RPLidar frame must be broadcasted according to picture shown in
 
 ## Customizing
 
-추가 작업이 필요할수 있는 부분
+기존에 없던 최소거리 설정 기능이 추가되었음
+
+### rplidar_a3.launch
 
 ```xml
-<arg name="min_distance" default="0.30"/> #30cm 이내의 포인트들은 무시된다.
-<arg name="max_distance" default="20.0"/> #최대 관측 거리 20m
-<arg name="serial_baudrate" default="256000"/> #baudrate, slamtec 스틱에 몇으로 되어 있는지 확인해보자.
-<param name="serial_port"   type="string" value="/dev/ttyUSB1"/> #포트 번호 맞춰주기
+<launch>
+    <arg name="min_distance" default="0.30"/> #30cm 이내의 포인트들은 무시된다.
+    <arg name="max_distance" default="20.0"/> #최대 관측 거리 20m
+    <arg name="serial_baudrate" default="256000"/> #baudrate 설정, 상단에 모델에 적합한 값이 적혀 있음
+
+    <node name="rplidarNode" pkg="rplidar_ros" type="rplidarNode" output="screen">
+        <param name="serial_port" type="string" value="/dev/ttyUSB0"/> #포트 번호 맞춰주기
+        <param name="serial_baudrate" type="int" value="$(arg serial_baudrate)"/>
+        <param name="frame_id" type="string" value="laser"/>
+        <param name="inverted" type="bool" value="false"/>
+        <param name="angle_compensate" type="bool" value="true"/>
+        <param name="min_distance" value="$(arg min_distance)"/>
+        <param name="max_distance" value="$(arg max_distance)"/>
+    </node>
+</launch>
 ```
