@@ -36,6 +36,8 @@
 #include "sensor_msgs/LaserScan.h"
 #include "std_srvs/Empty.h"
 #include "sl_lidar.h" 
+#include "diagnostic_updater/diagnostic_updater.h"
+#include "diagnostic_updater/publisher.h"
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -52,6 +54,10 @@ enum {
 using namespace sl;
 
 ILidarDriver * drv = NULL;
+diagnostic_updater::Updater* updater;
+sl_result op_result_diagnostic;
+sl_result op_result_health;
+sl_lidar_response_device_health_t healthinfo_g;
 
 void publish_scan(ros::Publisher *pub,
                   sl_lidar_response_measurement_node_hq_t *nodes,
@@ -110,6 +116,23 @@ void publish_scan(ros::Publisher *pub,
     pub->publish(scan_msg);
 }
 
+void check_lidar_status(diagnostic_updater::DiagnosticStatusWrapper &stat)
+{
+    // LidarMotorInfo motorinfo;
+    // drv->getMotorInfo(motorinfo);
+    if (drv == NULL || !drv->isConnected() || op_result_diagnostic != SL_RESULT_OK || !SL_IS_OK(op_result_health)) {
+        stat.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "NO RESPONSE");
+    } else if(healthinfo_g.status == SL_LIDAR_STATUS_WARNING) {
+        stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "WARNING");
+    } else if(healthinfo_g.status == SL_LIDAR_STATUS_ERROR) {
+        stat.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "ERROR");
+    // } else if(motorinfo.desired_speed < 100 ) {
+    //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "MOTOR STOPED");
+    } else {
+        stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
+    }
+}
+
 bool getRPLIDARDeviceInfo(ILidarDriver * drv)
 {
     sl_result     op_result;
@@ -165,6 +188,8 @@ bool checkRPLIDARHealth(ILidarDriver * drv)
     sl_lidar_response_device_health_t healthinfo;
 
     op_result = drv->getHealth(healthinfo);
+    op_result_health = op_result;
+    healthinfo_g = healthinfo;
     if (SL_IS_OK(op_result)) { 
         //ROS_INFO("RPLidar health status : %d", healthinfo.status);
         switch (healthinfo.status) {
@@ -241,6 +266,10 @@ int main(int argc, char * argv[]) {
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
     ros::NodeHandle nh_private("~");
+
+    updater = new diagnostic_updater::Updater();
+    updater->setHardwareID("rplidar");
+    updater->add("Lidar Status", check_lidar_status);
     nh_private.param<std::string>("channel_type", channel_type, "serial");
     nh_private.param<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
     nh_private.param<int>("tcp_port", tcp_port, 20108);
@@ -393,11 +422,13 @@ int main(int argc, char * argv[]) {
 
     
     while (ros::ok()) {
+        updater->update();        
         sl_lidar_response_measurement_node_hq_t nodes[8192];
         size_t   count = _countof(nodes);
 
         start_scan_time = ros::Time::now();
         op_result = drv->grabScanDataHq(nodes, count);
+        op_result_diagnostic = op_result;
         end_scan_time = ros::Time::now();
         scan_duration = (end_scan_time - start_scan_time).toSec();
 
