@@ -58,6 +58,7 @@ diagnostic_updater::Updater* updater;
 sl_result op_result_diagnostic;
 sl_result op_result_health;
 sl_lidar_response_device_health_t healthinfo_g;
+sl_lidar_response_measurement_node_hq_t nodes_g[8192];
 
 void publish_scan(ros::Publisher *pub,
                   sl_lidar_response_measurement_node_hq_t *nodes,
@@ -118,8 +119,15 @@ void publish_scan(ros::Publisher *pub,
 
 void check_lidar_status(diagnostic_updater::DiagnosticStatusWrapper &stat)
 {
+    // 데이터 분석을 위한 임계값 설정
+    float too_close_threshold = 0.2;  // 너무 가까운 거리(단위: meters)
+    float low_intensity_threshold = 50;  // 품질 값 임계값
+    int too_close_count = 0;
+    int low_intensity_count = 0;
+    int total_points = 0;
     // LidarMotorInfo motorinfo;
     // drv->getMotorInfo(motorinfo);
+
     if (drv == NULL || !drv->isConnected() || op_result_diagnostic != SL_RESULT_OK || !SL_IS_OK(op_result_health)) {
         stat.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "NO RESPONSE");
     } else if(healthinfo_g.status == SL_LIDAR_STATUS_WARNING) {
@@ -129,7 +137,27 @@ void check_lidar_status(diagnostic_updater::DiagnosticStatusWrapper &stat)
     // } else if(motorinfo.desired_speed < 100 ) {
     //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "MOTOR STOPED");
     } else {
-        stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
+        // LiDAR 데이터에서 비정상적인 상태를 감지 (ranges와 intensities 기반)
+        for (size_t i = 0; i < _countof(nodes_g); ++i) {
+            if (nodes_g[i].dist_mm_q2 / 4.0f / 1000 < too_close_threshold) {
+                too_close_count++;
+            }
+            // if ((float)(nodes_g[i].quality >> 2) < low_intensity_threshold) {
+            //     low_intensity_count++;
+            // }
+            total_points++;
+        }
+
+        // 만약 일정 비율 이상의 포인트들이 너무 가까운 값이면 경고를 띄움
+        if (too_close_count > total_points * 0.70) {
+            stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "BLOCKED");
+        // } else if (low_intensity_count > total_points * 0.8) {
+        //     // 품질 값이 낮은 경우 경고를 띄움
+        //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "LiDAR signal quality is low");
+        } else {
+            // 정상적인 상태
+            stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
+        }
     }
 }
 
@@ -428,6 +456,7 @@ int main(int argc, char * argv[]) {
 
         start_scan_time = ros::Time::now();
         op_result = drv->grabScanDataHq(nodes, count);
+        memcpy(nodes_g, nodes, sizeof(nodes));
         op_result_diagnostic = op_result;
         end_scan_time = ros::Time::now();
         scan_duration = (end_scan_time - start_scan_time).toSec();
