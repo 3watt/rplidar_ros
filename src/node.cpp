@@ -35,9 +35,13 @@
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
 #include "std_srvs/Empty.h"
-#include "sl_lidar.h" 
-#include "diagnostic_updater/diagnostic_updater.h"
-#include "diagnostic_updater/publisher.h"
+#include "sl_lidar.h"
+
+#include <thread>
+#include <diagnostic_msgs/DiagnosticStatus.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
+#include <diagnostic_msgs/KeyValue.h>
+
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -54,7 +58,6 @@ enum {
 using namespace sl;
 
 ILidarDriver * drv = NULL;
-diagnostic_updater::Updater* updater;
 sl_result op_result_diagnostic;
 sl_result op_result_health;
 sl_lidar_response_device_health_t healthinfo_g;
@@ -115,50 +118,6 @@ void publish_scan(ros::Publisher *pub,
     }
 
     pub->publish(scan_msg);
-}
-
-void check_lidar_status(diagnostic_updater::DiagnosticStatusWrapper &stat)
-{
-    // 데이터 분석을 위한 임계값 설정
-    float too_close_threshold = 0.2;  // 너무 가까운 거리(단위: meters)
-    float low_intensity_threshold = 50;  // 품질 값 임계값
-    int too_close_count = 0;
-    int low_intensity_count = 0;
-    int total_points = 0;
-    // LidarMotorInfo motorinfo;
-    // drv->getMotorInfo(motorinfo);
-
-    if (drv == NULL || !drv->isConnected() || op_result_diagnostic != SL_RESULT_OK || !SL_IS_OK(op_result_health)) {
-        stat.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "NO RESPONSE");
-    } else if(healthinfo_g.status == SL_LIDAR_STATUS_WARNING) {
-        stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "WARNING");
-    } else if(healthinfo_g.status == SL_LIDAR_STATUS_ERROR) {
-        stat.summary(diagnostic_msgs::DiagnosticStatus::ERROR, "ERROR");
-    // } else if(motorinfo.desired_speed < 100 ) {
-    //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "MOTOR STOPED");
-    } else {
-        // LiDAR 데이터에서 비정상적인 상태를 감지 (ranges와 intensities 기반)
-        for (size_t i = 0; i < _countof(nodes_g); ++i) {
-            if (nodes_g[i].dist_mm_q2 / 4.0f / 1000 < too_close_threshold) {
-                too_close_count++;
-            }
-            // if ((float)(nodes_g[i].quality >> 2) < low_intensity_threshold) {
-            //     low_intensity_count++;
-            // }
-            total_points++;
-        }
-
-        // 만약 일정 비율 이상의 포인트들이 너무 가까운 값이면 경고를 띄움
-        if (too_close_count > total_points * 0.70) {
-            stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "BLOCKED");
-        // } else if (low_intensity_count > total_points * 0.8) {
-        //     // 품질 값이 낮은 경우 경고를 띄움
-        //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "LiDAR signal quality is low");
-        } else {
-            // 정상적인 상태
-            stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
-        }
-    }
 }
 
 bool getRPLIDARDeviceInfo(ILidarDriver * drv)
@@ -272,6 +231,71 @@ static float getAngle(const sl_lidar_response_measurement_node_hq_t& node)
     return node.angle_z_q14 * 90.f / 16384.f;
 }
 
+// Diagnostic
+void thread_diagnostics_updater(){
+    ros::NodeHandle n;
+    ros::Publisher pub = n.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 10);
+    ros::Rate rate(1.0);
+    std::string diagnostics_namespace_sensor;
+    n.param<std::string>("diagnostics_namespace_sensor", diagnostics_namespace_sensor, "센서/");
+
+    // 데이터 분석을 위한 임계값 설정
+    float too_close_threshold = 0.2;  // 너무 가까운 거리(단위: meters)
+    float low_intensity_threshold = 50;  // 품질 값 임계값
+    int too_close_count = 0;
+    int low_intensity_count = 0;
+    int total_points = 0;
+    // LidarMotorInfo motorinfo;
+    // drv->getMotorInfo(motorinfo);
+    diagnostic_msgs::DiagnosticArray diag_array;
+    diagnostic_msgs::DiagnosticStatus diag_status;
+    diagnostic_msgs::KeyValue key_value;
+    diag_status.name = diagnostics_namespace_sensor + "Lidar";
+
+    while(ros::ok()){
+        if (drv == NULL || !drv->isConnected() || op_result_diagnostic != SL_RESULT_OK || !SL_IS_OK(op_result_health)) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+            diag_status.message = "no response";
+        } else if(healthinfo_g.status == SL_LIDAR_STATUS_WARNING) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::WARN;
+            diag_status.message = "warn";
+        } else if(healthinfo_g.status == SL_LIDAR_STATUS_ERROR) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+            diag_status.message = "error";
+        // } else if(motorinfo.desired_speed < 100 ) {
+        //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "MOTOR STOPED");
+        } else {
+            // LiDAR 데이터에서 비정상적인 상태를 감지 (ranges와 intensities 기반)
+            for (size_t i = 0; i < _countof(nodes_g); ++i) {
+                if (nodes_g[i].dist_mm_q2 / 4.0f / 1000 < too_close_threshold) {
+                    too_close_count++;
+                }
+                // if ((float)(nodes_g[i].quality >> 2) < low_intensity_threshold) {
+                //     low_intensity_count++;
+                // }
+                total_points++;
+            }
+            // 만약 일정 비율 이상의 포인트들이 너무 가까운 값이면 경고를 띄움
+            if (too_close_count > total_points * 0.70) {
+                diag_status.level = diagnostic_msgs::DiagnosticStatus::WARN;
+                diag_status.message = "blocked";
+            // } else if (low_intensity_count > total_points * 0.8) {
+            //     // 품질 값이 낮은 경우 경고를 띄움
+            //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "LiDAR signal quality is low");
+            } else {
+                // 정상적인 상태
+                diag_status.level = diagnostic_msgs::DiagnosticStatus::OK;
+                diag_status.message = "ok";
+                // stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
+            }
+        }
+        diag_array.status.push_back(diag_status);
+        pub.publish(diag_array);
+        diag_array.status.clear();
+        rate.sleep();
+    }
+}
+
 int main(int argc, char * argv[]) {
     ros::init(argc, argv, "rplidar_node");
     
@@ -295,9 +319,10 @@ int main(int argc, char * argv[]) {
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
     ros::NodeHandle nh_private("~");
 
-    updater = new diagnostic_updater::Updater();
-    updater->setHardwareID("rplidar");
-    updater->add("Lidar Status", check_lidar_status);
+    // Diagnostic
+    std::thread thread_diagnostics(thread_diagnostics_updater);
+    thread_diagnostics.detach();
+
     nh_private.param<std::string>("channel_type", channel_type, "serial");
     nh_private.param<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
     nh_private.param<int>("tcp_port", tcp_port, 20108);
@@ -450,7 +475,7 @@ int main(int argc, char * argv[]) {
 
     
     while (ros::ok()) {
-        updater->update();        
+        // updater->update();        
         sl_lidar_response_measurement_node_hq_t nodes[8192];
         size_t   count = _countof(nodes);
 
