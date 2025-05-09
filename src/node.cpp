@@ -66,7 +66,7 @@ sl_lidar_response_measurement_node_hq_t nodes_g[8192];
 void publish_scan(ros::Publisher *pub,
                   sl_lidar_response_measurement_node_hq_t *nodes,
                   size_t node_count, ros::Time start,
-                  double scan_time, bool inverted,
+                  double scan_time, bool inverted, bool ccw90, 
                   float angle_min, float angle_max,
                   float max_distance,
                   std::string frame_id)
@@ -308,6 +308,7 @@ int main(int argc, char * argv[]) {
     int serial_baudrate = 115200;
     std::string frame_id;
     bool inverted = false;
+    bool ccw90 = false;
     bool initial_reset = false;
     bool angle_compensate = true;    
     float angle_compensate_multiple = 1.0;//min 360 ponits at per 1 degree
@@ -332,6 +333,7 @@ int main(int argc, char * argv[]) {
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
     nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
     nh_private.param<bool>("inverted", inverted, false);
+    nh_private.param<bool>("ccw90", ccw90, false);
     nh_private.param<bool>("initial_reset", initial_reset, false);
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
@@ -520,7 +522,7 @@ int main(int argc, char * argv[]) {
                     }
   
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
                 } else {
@@ -537,7 +539,7 @@ int main(int argc, char * argv[]) {
                     angle_max = DEG2RAD(getAngle(nodes[end_node]));
 
                     publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
                }
@@ -546,7 +548,7 @@ int main(int argc, char * argv[]) {
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(359.0f);
                 publish_scan(&scan_pub, nodes, count,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
             }
