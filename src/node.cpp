@@ -98,22 +98,92 @@ void publish_scan(ros::Publisher *pub,
     scan_msg.ranges.resize(node_count);
     bool reverse_data = (!inverted && reversed) || (inverted && !reversed);
     if (!reverse_data) {
-        for (size_t i = 0; i < node_count; i++) {
-            float read_value = (float) nodes[i].dist_mm_q2/4.0f/1000;
-            if (read_value == 0.0)
-                scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
-            else
-                scan_msg.ranges[i] = read_value;
-            scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+        if ( ccw90 ) {
+            float angle = scan_msg.angle_min;
+            float angle_increment = scan_msg.angle_increment;
+            float angle_threshold = angle + M_PI / 2 - (angle_increment*0.5);
+
+            size_t shift;
+            for (shift = 0; angle < angle_threshold; shift++, angle += angle_increment);
+            float angle_diff = angle - scan_msg.angle_min;
+
+            size_t i = 0;
+            for (size_t j = shift; j < node_count; j++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                i++;
+            }
+
+            for(size_t j = 0; j < shift; j++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                i++;
+            }
+
+            scan_msg.angle_min += angle_diff;
+            scan_msg.angle_max += angle_diff;
+
+        } else {
+            for (size_t i = 0; i < node_count; i++) {
+                float read_value = (float) nodes[i].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+            }
         }
     } else {
-        for (size_t i = 0; i < node_count; i++) {
-            float read_value = (float)nodes[i].dist_mm_q2/4.0f/1000;
-            if (read_value == 0.0)
-                scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
-            else
-                scan_msg.ranges[node_count-1-i] = read_value;
-            scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+        if ( ccw90 ) {
+            float angle = scan_msg.angle_min;
+            float angle_increment = scan_msg.angle_increment;
+            float angle_threshold = angle + M_PI / 2 - (angle_increment*0.5);
+
+            int shift;
+            for (shift = node_count - 1; angle < angle_threshold; shift--, angle += angle_increment);
+            float angle_diff = angle - scan_msg.angle_min;
+
+            int j = shift;
+            for (size_t i = 0; i <= shift; i++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                j--;
+            }
+            
+            j = shift + 1;
+            for (size_t i = node_count - 1; i > shift; i--) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                j++;
+            }
+
+            scan_msg.angle_min += angle_diff;
+            scan_msg.angle_max += angle_diff;
+        } else {
+            for (size_t i = 0; i < node_count; i++) {
+                float read_value = (float)nodes[i].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[node_count-1-i] = read_value;
+                scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+            }
         }
     }
 
@@ -348,6 +418,8 @@ int main(int argc, char * argv[]) {
     int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
     int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;    
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros, SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
+
+    ROS_INFO("RPLIDAR ccw90 parameter value : %d.", ccw90);
 
     sl_result  op_result;
 
