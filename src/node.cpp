@@ -35,7 +35,13 @@
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
 #include "std_srvs/Empty.h"
-#include "sl_lidar.h" 
+#include "sl_lidar.h"
+
+#include <thread>
+#include <diagnostic_msgs/DiagnosticStatus.h>
+#include <diagnostic_msgs/DiagnosticArray.h>
+#include <diagnostic_msgs/KeyValue.h>
+
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -52,11 +58,15 @@ enum {
 using namespace sl;
 
 ILidarDriver * drv = NULL;
+sl_result op_result_diagnostic;
+sl_result op_result_health;
+sl_lidar_response_device_health_t healthinfo_g;
+sl_lidar_response_measurement_node_hq_t nodes_g[8192];
 
 void publish_scan(ros::Publisher *pub,
                   sl_lidar_response_measurement_node_hq_t *nodes,
                   size_t node_count, ros::Time start,
-                  double scan_time, bool inverted,
+                  double scan_time, bool inverted, bool ccw90, 
                   float angle_min, float angle_max,
                   float max_distance,
                   std::string frame_id)
@@ -88,22 +98,92 @@ void publish_scan(ros::Publisher *pub,
     scan_msg.ranges.resize(node_count);
     bool reverse_data = (!inverted && reversed) || (inverted && !reversed);
     if (!reverse_data) {
-        for (size_t i = 0; i < node_count; i++) {
-            float read_value = (float) nodes[i].dist_mm_q2/4.0f/1000;
-            if (read_value == 0.0)
-                scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
-            else
-                scan_msg.ranges[i] = read_value;
-            scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+        if ( ccw90 ) {
+            float angle = scan_msg.angle_min;
+            float angle_increment = scan_msg.angle_increment;
+            float angle_threshold = angle + M_PI / 2 - (angle_increment*0.5);
+
+            size_t shift;
+            for (shift = 0; angle < angle_threshold; shift++, angle += angle_increment);
+            float angle_diff = angle - scan_msg.angle_min;
+
+            size_t i = 0;
+            for (size_t j = shift; j < node_count; j++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                i++;
+            }
+
+            for(size_t j = 0; j < shift; j++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                i++;
+            }
+
+            scan_msg.angle_min += angle_diff;
+            scan_msg.angle_max += angle_diff;
+
+        } else {
+            for (size_t i = 0; i < node_count; i++) {
+                float read_value = (float) nodes[i].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[i].quality >> 2);
+            }
         }
     } else {
-        for (size_t i = 0; i < node_count; i++) {
-            float read_value = (float)nodes[i].dist_mm_q2/4.0f/1000;
-            if (read_value == 0.0)
-                scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
-            else
-                scan_msg.ranges[node_count-1-i] = read_value;
-            scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+        if ( ccw90 ) {
+            float angle = scan_msg.angle_min;
+            float angle_increment = scan_msg.angle_increment;
+            float angle_threshold = angle + M_PI / 2 - (angle_increment*0.5);
+
+            int shift;
+            for (shift = node_count - 1; angle < angle_threshold; shift--, angle += angle_increment);
+            float angle_diff = angle - scan_msg.angle_min;
+
+            int j = shift;
+            for (size_t i = 0; i <= shift; i++) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                j--;
+            }
+            
+            j = shift + 1;
+            for (size_t i = node_count - 1; i > shift; i--) {
+                float read_value = (float) nodes[j].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[i] = read_value;
+                scan_msg.intensities[i] = (float) (nodes[j].quality >> 2); 
+                j++;
+            }
+
+            scan_msg.angle_min += angle_diff;
+            scan_msg.angle_max += angle_diff;
+        } else {
+            for (size_t i = 0; i < node_count; i++) {
+                float read_value = (float)nodes[i].dist_mm_q2/4.0f/1000;
+                if (read_value == 0.0)
+                    scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
+                else
+                    scan_msg.ranges[node_count-1-i] = read_value;
+                scan_msg.intensities[node_count-1-i] = (float) (nodes[i].quality >> 2);
+            }
         }
     }
 
@@ -165,6 +245,8 @@ bool checkRPLIDARHealth(ILidarDriver * drv)
     sl_lidar_response_device_health_t healthinfo;
 
     op_result = drv->getHealth(healthinfo);
+    op_result_health = op_result;
+    healthinfo_g = healthinfo;
     if (SL_IS_OK(op_result)) { 
         //ROS_INFO("RPLidar health status : %d", healthinfo.status);
         switch (healthinfo.status) {
@@ -219,6 +301,71 @@ static float getAngle(const sl_lidar_response_measurement_node_hq_t& node)
     return node.angle_z_q14 * 90.f / 16384.f;
 }
 
+// Diagnostic
+void thread_diagnostics_updater(){
+    ros::NodeHandle n;
+    ros::Publisher pub = n.advertise<diagnostic_msgs::DiagnosticArray>("/diagnostics", 10);
+    ros::Rate rate(1.0);
+    std::string diagnostics_namespace_sensor;
+    n.param<std::string>("diagnostics_namespace_sensor", diagnostics_namespace_sensor, "센서/");
+
+    // 데이터 분석을 위한 임계값 설정
+    float too_close_threshold = 0.2;  // 너무 가까운 거리(단위: meters)
+    float low_intensity_threshold = 50;  // 품질 값 임계값
+    int too_close_count = 0;
+    int low_intensity_count = 0;
+    int total_points = 0;
+    // LidarMotorInfo motorinfo;
+    // drv->getMotorInfo(motorinfo);
+    diagnostic_msgs::DiagnosticArray diag_array;
+    diagnostic_msgs::DiagnosticStatus diag_status;
+    diagnostic_msgs::KeyValue key_value;
+    diag_status.name = diagnostics_namespace_sensor + "Lidar";
+
+    while(ros::ok()){
+        if (drv == NULL || !drv->isConnected() || op_result_diagnostic != SL_RESULT_OK || !SL_IS_OK(op_result_health)) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+            diag_status.message = "no response";
+        } else if(healthinfo_g.status == SL_LIDAR_STATUS_WARNING) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::WARN;
+            diag_status.message = "warn";
+        } else if(healthinfo_g.status == SL_LIDAR_STATUS_ERROR) {
+            diag_status.level = diagnostic_msgs::DiagnosticStatus::ERROR;
+            diag_status.message = "error";
+        // } else if(motorinfo.desired_speed < 100 ) {
+        //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "MOTOR STOPED");
+        } else {
+            // LiDAR 데이터에서 비정상적인 상태를 감지 (ranges와 intensities 기반)
+            for (size_t i = 0; i < _countof(nodes_g); ++i) {
+                if (nodes_g[i].dist_mm_q2 / 4.0f / 1000 < too_close_threshold) {
+                    too_close_count++;
+                }
+                // if ((float)(nodes_g[i].quality >> 2) < low_intensity_threshold) {
+                //     low_intensity_count++;
+                // }
+                total_points++;
+            }
+            // 만약 일정 비율 이상의 포인트들이 너무 가까운 값이면 경고를 띄움
+            if (too_close_count > total_points * 0.70) {
+                diag_status.level = diagnostic_msgs::DiagnosticStatus::WARN;
+                diag_status.message = "blocked";
+            // } else if (low_intensity_count > total_points * 0.8) {
+            //     // 품질 값이 낮은 경우 경고를 띄움
+            //     stat.summary(diagnostic_msgs::DiagnosticStatus::WARN, "LiDAR signal quality is low");
+            } else {
+                // 정상적인 상태
+                diag_status.level = diagnostic_msgs::DiagnosticStatus::OK;
+                diag_status.message = "ok";
+                // stat.summary(diagnostic_msgs::DiagnosticStatus::OK, "OK");
+            }
+        }
+        diag_array.status.push_back(diag_status);
+        pub.publish(diag_array);
+        diag_array.status.clear();
+        rate.sleep();
+    }
+}
+
 int main(int argc, char * argv[]) {
     ros::init(argc, argv, "rplidar_node");
     
@@ -231,6 +378,7 @@ int main(int argc, char * argv[]) {
     int serial_baudrate = 115200;
     std::string frame_id;
     bool inverted = false;
+    bool ccw90 = false;
     bool initial_reset = false;
     bool angle_compensate = true;    
     float angle_compensate_multiple = 1.0;//min 360 ponits at per 1 degree
@@ -241,6 +389,11 @@ int main(int argc, char * argv[]) {
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
     ros::NodeHandle nh_private("~");
+
+    // Diagnostic
+    std::thread thread_diagnostics(thread_diagnostics_updater);
+    thread_diagnostics.detach();
+
     nh_private.param<std::string>("channel_type", channel_type, "serial");
     nh_private.param<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
     nh_private.param<int>("tcp_port", tcp_port, 20108);
@@ -250,6 +403,7 @@ int main(int argc, char * argv[]) {
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200/*256000*/);//ros run for A1 A2, change to 256000 if A3
     nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
     nh_private.param<bool>("inverted", inverted, false);
+    nh_private.param<bool>("ccw90", ccw90, false);
     nh_private.param<bool>("initial_reset", initial_reset, false);
     nh_private.param<bool>("angle_compensate", angle_compensate, false);
     nh_private.param<std::string>("scan_mode", scan_mode, std::string());
@@ -264,6 +418,8 @@ int main(int argc, char * argv[]) {
     int ver_minor = SL_LIDAR_SDK_VERSION_MINOR;
     int ver_patch = SL_LIDAR_SDK_VERSION_PATCH;    
     ROS_INFO("RPLIDAR running on ROS package rplidar_ros, SDK Version:%d.%d.%d",ver_major,ver_minor,ver_patch);
+
+    ROS_INFO("RPLIDAR ccw90 parameter value : %d.", ccw90);
 
     sl_result  op_result;
 
@@ -393,11 +549,14 @@ int main(int argc, char * argv[]) {
 
     
     while (ros::ok()) {
+        // updater->update();        
         sl_lidar_response_measurement_node_hq_t nodes[8192];
         size_t   count = _countof(nodes);
 
         start_scan_time = ros::Time::now();
         op_result = drv->grabScanDataHq(nodes, count);
+        memcpy(nodes_g, nodes, sizeof(nodes));
+        op_result_diagnostic = op_result;
         end_scan_time = ros::Time::now();
         scan_duration = (end_scan_time - start_scan_time).toSec();
 
@@ -435,7 +594,7 @@ int main(int argc, char * argv[]) {
                     }
   
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
                 } else {
@@ -452,7 +611,7 @@ int main(int argc, char * argv[]) {
                     angle_max = DEG2RAD(getAngle(nodes[end_node]));
 
                     publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
                }
@@ -461,7 +620,7 @@ int main(int argc, char * argv[]) {
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(359.0f);
                 publish_scan(&scan_pub, nodes, count,
-                             start_scan_time, scan_duration, inverted,
+                             start_scan_time, scan_duration, inverted, ccw90,
                              angle_min, angle_max, max_distance,
                              frame_id);
             }
